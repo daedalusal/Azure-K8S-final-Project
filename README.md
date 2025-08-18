@@ -54,13 +54,13 @@ Design, provision, and operate a small, production‑like environment in the clo
 
 1. **Planning & Accounts**
 
-* [ ] Cloud subscription available and accessible.
-* [ ] DNS provider chosen for a free subdomain.
+* [x] Cloud subscription available and accessible. (Azure)
+* [x] DNS provider chosen for a free subdomain. (cloudflare)
 
 2. **Infrastructure Ready**
 
-* [ ] Three Linux VMs provisioned (1 master, 2 workers).
-* [ ] Basic network and access in place.
+* [x] Three Linux VMs provisioned (1 master, 2 workers).
+* [x] Basic network and access in place.
 
 3. **Cluster Operational**
 
@@ -81,7 +81,7 @@ Design, provision, and operate a small, production‑like environment in the clo
 
 6. **Bookstore API**
 
-* [ ] API packaged into a container image.
+* [x] API packaged into a container image.
 * [ ] Deployed to the cluster via preferred method (e.g., Helm).
 * [ ] Reachable externally at the domain with valid HTTPS.
 

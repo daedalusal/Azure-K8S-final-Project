@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: python-rest-api
+  namespace: python-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: python-rest-api
+  template:
+    metadata:
+      labels:
+        app: python-rest-api
+    spec:
+      dnsPolicy: ClusterFirst
+      dnsConfig:
+        nameservers:
+          - 168.63.129.16
+          - 8.8.8.8
+          - 1.1.1.1
+        searches:
+          - python-api.svc.cluster.local
+          - svc.cluster.local
+          - cluster.local
+        options:
+          - name: ndots
+            value: "2"
+          - name: edns0
+          - name: timeout
+            value: "5"
+          - name: attempts
+            value: "3"
+      containers:
+      - name: python-rest-api
+        image: daedalusal2025/mypython-app:latest
+        ports:
+        - containerPort: 80
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"

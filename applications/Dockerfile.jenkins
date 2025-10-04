@@ -1,0 +1,34 @@
+FROM jenkins/jenkins:lts-alpine
+
+# Switch to root to install packages and configure DNS
+USER root
+
+# Install curl and other tools
+RUN apk update && apk add --no-cache curl
+
+# Configure Jenkins to skip setup wizard and use reliable DNS
+ENV JAVA_OPTS="-Djenkins.install.runSetupWizard=false -Dhudson.model.DownloadService.noSignatureCheck=true -Djava.net.preferIPv4Stack=true -Djava.net.useSystemProxies=false"
+ENV JENKINS_OPTS="--httpPort=8080"
+
+# Create a simple script to handle DNS issues
+RUN echo '#!/bin/sh' > /usr/local/bin/dns-fix.sh && \
+    echo 'export JAVA_OPTS="$JAVA_OPTS -Dsun.net.useExclusiveBind=false"' >> /usr/local/bin/dns-fix.sh && \
+    echo 'exec "$@"' >> /usr/local/bin/dns-fix.sh && \
+    chmod +x /usr/local/bin/dns-fix.sh
+
+# Create admin user without network dependency
+COPY default-user.groovy /usr/share/jenkins/ref/init.groovy.d/default-user.groovy
+
+# Set proper permissions
+RUN chown -R jenkins:jenkins /usr/share/jenkins/ref/
+
+# Switch back to jenkins user
+USER jenkins
+
+# Copy Jenkins configuration
+COPY jenkins.yaml /var/jenkins_home/jenkins.yaml
+
+EXPOSE 8080
+EXPOSE 50000
+
+ENTRYPOINT ["/usr/local/bin/dns-fix.sh", "/usr/local/bin/jenkins.sh"]

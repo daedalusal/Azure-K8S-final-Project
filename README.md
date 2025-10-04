@@ -1,6 +1,115 @@
-# Kubernetes CI/CD Pipeline with Jenkins and cert-manager
+# 🚀 Azure Kubernetes CI/CD Infrastructure
 
-This project sets up a complete Kubernetes cluster on Azure VMs with Jenkins for CI/CD automation, NGINX Ingress for traffic routing, and cert-manager for automatic TLS certificate management.
+[![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30-blue.svg)](https://kubernetes.io/)
+[![Jenkins](https://img.shields.io/badge/Jenkins-2.516.3-red.svg)](https://jenkins.io/)
+[![Terraform](https://img.shields.io/badge/Terraform-Azur├── 🔧 scripts/            # Automation Scripts
+│   ├── build-and-push.ps1 # PowerShell Docker build script
+│   └── build-and-push.sh  # Bash Docker build script
+└── 📚 Documentation
+    └── README.md          # This file)](https://terraform.io/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+A complete Infrastructure-as-Code solution for deploying a production-ready Kubernetes cluster on Azure with Jenkins CI/CD pipeline, NGINX Ingress, and REST API applications.
+
+## ✨ Features
+
+- 🏗️ **Automated Infrastructure**: Terraform-provisioned Azure VMs
+- ⚙️ **Kubernetes Cluster**: 3-node cluster with VXLAN networking
+- 🔄 **CI/CD Pipeline**: Jenkins with Kubernetes agents
+- 🌐 **Domain Routing**: NGINX Ingress with custom domains
+- 🐳 **Containerized Apps**: Python REST API with Docker
+- 🔒 **Production Ready**: Secure, scalable, and maintainable
+
+## 🏗️ Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Azure Cloud                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
+│  │ Master Node │  │ Worker 1    │  │ Worker 2    │      │
+│  │ Control     │  │ kubelet     │  │ kubelet     │      │
+│  │ Plane       │  │ containerd  │  │ containerd  │      │
+│  └─────────────┘  └─────────────┘  └─────────────┘      │
+└─────────────────────────────────────────────────────────┘
+                               │
+┌─────────────────────────────────────────────────────────┐
+│              Kubernetes Services                        │
+│  ┌─────────┐  ┌───────────┐  ┌─────────────────────┐    │
+│  │ Jenkins │  │ Python    │  │ NGINX Ingress       │    │
+│  │ CI/CD   │  │ REST API  │  │ Load Balancer       │    │
+│  └─────────┘  └───────────┘  └─────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+```
+
+## 🚀 Quick Start
+
+### Prerequisites
+- Azure subscription with VM creation permissions
+- Terraform >= 1.0
+- Ansible >= 2.9
+- SSH key pair for Azure access
+- Domain name (optional)
+
+### 1. Deploy Infrastructure
+```bash
+# Clone repository
+git clone <your-repo-url>
+cd k8s-terraform
+
+# Initialize and deploy from terraform directory
+cd terraform
+terraform init
+terraform apply
+cd ..
+```
+
+### 2. Configure Kubernetes
+```bash
+# Update ansible/inventory.ini with your VM IPs from Terraform output
+# Copy the template and fill in your IPs:
+cp ansible/inventory.tpl ansible/inventory.ini
+# Edit ansible/inventory.ini with your actual IP addresses
+
+# Run Ansible playbook
+ansible-playbook -i ansible/inventory.ini ansible/playbook.yml
+```
+
+## ⚙️ Configuration
+
+Before deploying, you need to customize several files for your environment:
+
+### Required Changes:
+1. **Domain Names**: Replace `yourdomain.com` with your actual domain in:
+   - `kubernetes/*.yaml` files (ingress configurations)
+   - `ansible/playbook.yml` (Jenkins setup)
+
+2. **Docker Hub Username**: Replace `yourusername` with your Docker Hub username in:
+   - `kubernetes/python-api-deployment.yaml`
+   - `kubernetes/custom-jenkins-deployment.yaml`
+   - `scripts/build-and-push.*`
+
+3. **IP Addresses**: Create `ansible/inventory.ini` from the template with your VM IPs
+
+### 3. Access Services
+- **Jenkins**: `http://jenkins.yourdomain.com:30189`
+- **API**: `http://api.yourdomain.com:30189` Pipeline with Jenkins and cert-manager
+
+This project sets up a complete Kube4. **Configure CI/CD Pipeline**
+
+1. **Access Jenkins** at `https://jenkins.yourdomain.com` (HTTPS with automatic certificate)
+2. **Create a new Pipeline job**:
+   - New Item → Pipeline
+   - Name: `python-api-pipeline`
+   - Pipeline script from SCM
+   - Git URL: `<your-git-repo>`
+   - Script Path: `Jenkinsfile`
+
+3. **Configure Git Repository**:
+   - Push the provided `Jenkinsfile`, `Dockerfile`, `app.py`, and `requirements.txt` to your Git repository
+   - Update the Git URL in the Jenkins job
+
+4. **Run the Pipeline**:
+   - The pipeline will automatically build, test, and deploy your Python APIn Azure VMs with Jenkins for CI/CD automation, NGINX Ingress for traffic routing, and cert-manager for automatic TLS certificate management.
 
 ## 🏗️ Architecture Overview
 
@@ -81,15 +190,24 @@ ansible-playbook -i inventory.ini playbook.yml
 
 ### 3. Access Jenkins
 ```bash
-# Port-forward Jenkins service
-kubectl port-forward svc/jenkins 8080:8080 -n jenkins
+# Jenkins will be automatically available via NGINX Ingress with HTTPS
+# URL: https://jenkins.yourdomain.com
 
 # Get Jenkins admin password
 kubectl get secret jenkins -n jenkins -o jsonpath="{.data.jenkins-admin-password}" | base64 --decode
 
-# Access Jenkins at http://localhost:8080
+# Access Jenkins with automatic HTTPS certificate from Let's Encrypt
 # Username: admin
 # Password: <decoded-password>
+```
+
+### 3.1. Configure DNS (Required)
+```bash
+# Add DNS A record for your domain:
+# jenkins.yourdomain.com → <your-master-node-ip>
+# 
+# Example:
+# jenkins.yourdomain.com → 1.2.3.4
 ```
 
 ### 4. Configure CI/CD Pipeline
@@ -157,229 +275,157 @@ k8s-terraform/
 - **Certificate Renewal**: Automatic certificate renewal
 - **DNS Challenge**: HTTP-01 challenge via Ingress
 
-## 🌐 Accessing Applications
+## ✅ Demo Status
 
-### Python REST API Endpoints
+🚀 **Example Implementation**
+
+This repository provides a complete working example of:
+- **Jenkins**: Accessible at `jenkins.yourdomain.com:30189`
+- **Python API**: Available at `api.yourdomain.com:30189/books`
+- **Cluster**: 3-node Azure deployment with VXLAN networking
+
+> **Note**: Replace domain names and credentials with your own before deployment.
+
+## 📁 Project Structure
+
+```
+k8s-terraform/
+├── 📦 terraform/            # Infrastructure as Code
+│   ├── main.tf             # Azure VM provisioning
+│   ├── variables.tf        # Configuration variables  
+│   ├── outputs.tf          # IP addresses output
+│   ├── provider.tf         # Azure provider setup
+│   └── terraform.tfstate   # Terraform state files
+├── ⚙️ ansible/             # Configuration Management
+│   ├── playbook.yml        # Kubernetes cluster setup
+│   └── inventory.tpl       # Ansible inventory template
+├── 🐳 applications/        # Application Code
+│   ├── Dockerfile.python   # Python API container
+│   ├── Dockerfile.jenkins  # Custom Jenkins image
+│   ├── main.py            # FastAPI application
+│   ├── requirements.txt   # Python dependencies
+│   └── Jenkinsfile        # CI/CD pipeline
+├── ☸️ kubernetes/          # K8s Manifests
+│   ├── python-api-*.yaml  # Python API deployments
+│   ├── *-ingress.yaml     # Ingress configurations
+│   └── jenkins*.yaml      # Jenkins deployments
+├── � scripts/            # Automation Scripts
+│   ├── build-and-push.*   # Docker build scripts
+│   ├── create-jenkins-job.* # Jenkins job creation
+│   └── get-docker.sh      # Docker installation
+├── 🗂️ temp/               # Temporary Files
+│   ├── test_book.json     # API test data
+│   ├── plugins.txt        # Jenkins plugins
+│   └── *.groovy          # Jenkins configuration
+└── �📚 Documentation
+    ├── README.md          # This file
+    ├── PROJECT-STRUCTURE.md # Detailed structure
+    └── screenshots/       # Visual documentation
+```
+
+## 🔧 API Endpoints
+
 ```bash
-# Get all users
-curl http://<ingress-ip>/api/users
+# List all books
+GET /books
 
-# Get specific user
-curl http://<ingress-ip>/api/users/1
+# Get specific book
+GET /book/{id}
 
-# Create new user
-curl -X POST http://<ingress-ip>/api/users \
-  -H "Content-Type: application/json" \
-  -d '{"name":"New User","email":"user@example.com"}'
+# Add new book
+POST /book/{id}
+{
+  "name": "Book Title",
+  "author": "Author Name",
+  "isbn": "978-1234567890",
+  "price": 19.99
+}
 
 # Health check
-curl http://<ingress-ip>/health
-
-# Application info
-curl http://<ingress-ip>/api/info
+GET /health
 ```
 
-### Kubernetes Services
+## 🛠️ Development
+
+### Local Testing
 ```bash
-# Get service IPs
-kubectl get svc --all-namespaces
+# Build and test Python API locally
+docker build -f Dockerfile.python -t python-api .
+docker run -p 8000:8000 python-api
 
-# Access via NodePort (if LoadBalancer not available)
-kubectl get svc -n ingress-nginx
-# Use NodePort to access: http://<node-ip>:<nodeport>
+# Test endpoints
+curl localhost:8000/books
+curl localhost:8000/health
 ```
 
-## 🔍 Monitoring and Troubleshooting
+### Kubernetes Deployment
+```bash
+# Apply manifests from kubernetes directory
+kubectl apply -f kubernetes/python-api-deployment.yaml
+kubectl apply -f kubernetes/python-api-service.yaml  
+kubectl apply -f kubernetes/python-api-ingress.yaml
 
-### Check Cluster Status
+# Check status
+kubectl get pods -n python-api
+kubectl get svc -n python-api
+kubectl get ingress -n python-api
+```
+
+## 🔍 Monitoring
+
 ```bash
 # Cluster overview
-kubectl cluster-info
 kubectl get nodes -o wide
-
-# All pods status
 kubectl get pods --all-namespaces
 
 # Service status
 kubectl get svc --all-namespaces
+kubectl get ingress --all-namespaces
+
+# Logs
+kubectl logs -n jenkins-helm deployment/jenkins-helm
+kubectl logs -n python-api deployment/python-rest-api
+kubectl logs -n ingress-nginx deployment/ingress-nginx-controller
 ```
-
-### Jenkins Troubleshooting
-```bash
-# Jenkins pod logs
-kubectl logs -n jenkins statefulset/jenkins
-
-# Jenkins service status
-kubectl get svc -n jenkins
-
-# Check Jenkins configuration
-kubectl describe pod -n jenkins -l app.kubernetes.io/name=jenkins
-```
-
-### cert-manager Troubleshooting
-```bash
-# Check ClusterIssuer status
-kubectl get clusterissuers
-kubectl describe clusterissuer letsencrypt-prod
-
-# Check certificate status
-kubectl get certificates --all-namespaces
-kubectl describe certificate <cert-name> -n <namespace>
-
-# cert-manager logs
-kubectl logs -n cert-manager deployment/cert-manager
-```
-
-### DNS Resolution Issues
-```bash
-# Test DNS from pod
-kubectl run dns-test --image=busybox:1.28 --rm -it --restart=Never -- nslookup google.com
-
-# Check CoreDNS status
-kubectl get pods -n kube-system -l k8s-app=kube-dns
-kubectl logs -n kube-system deployment/coredns
-```
-
-## 🔒 Security Considerations
-
-### For Production Use
-- **Enable NetworkPolicies** for network segmentation
-- **Configure RBAC** with least privilege principles  
-- **Use Secrets** for sensitive data
-- **Enable Pod Security Standards**
-- **Regular Security Updates**
-- **Backup etcd** regularly
-
-### Current Security State
-- ⚠️ **No NetworkPolicies** (learning environment)
-- ⚠️ **Permissive RBAC** for Jenkins
-- ✅ **TLS encryption** with cert-manager
-- ✅ **Secure container images**
-- ✅ **Non-root containers**
 
 ## 🧹 Cleanup
 
-### Destroy Infrastructure
 ```bash
-# Remove Kubernetes applications
-helm uninstall jenkins -n jenkins
-helm uninstall cert-manager -n cert-manager
-helm uninstall ingress-nginx -n ingress-nginx
+# Remove applications
+kubectl delete namespace jenkins-helm
+kubectl delete namespace python-api
 
-# Destroy Azure infrastructure
+# Destroy infrastructure
 terraform destroy
 ```
 
 ## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-## 📚 Additional Resources
+## 📚 Resources
 
 - [Kubernetes Documentation](https://kubernetes.io/docs/)
 - [Jenkins on Kubernetes](https://www.jenkins.io/doc/book/installing/kubernetes/)
-- [cert-manager Documentation](https://cert-manager.io/docs/)
 - [NGINX Ingress Controller](https://kubernetes.github.io/ingress-nginx/)
-- [Calico Networking](https://docs.projectcalico.org/)
+- [Terraform Azure Provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs)
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🏆 Learning Outcomes
+## 🏆 What You'll Learn
 
-After completing this project, you will understand:
+- Infrastructure as Code with Terraform
+- Kubernetes cluster management and networking
+- CI/CD pipeline design with Jenkins
+- Container orchestration and ingress configuration
+- Azure cloud architecture and best practices
 
-- **Infrastructure as Code** with Terraform
-- **Configuration Management** with Ansible
-- **Kubernetes Cluster Management**
-- **Container Orchestration**
-- **CI/CD Pipeline Design**
-- **Service Mesh and Networking**
-- **TLS Certificate Management**
-- **Cloud-Native Architecture Patterns**
-- **DevOps Best Practices**
-- **Monitoring and Troubleshooting**
+---
 
-## 🛠️ Today's Fixes Applied
-
-### Issues Resolved
-1. **NetworkPolicy Blocking API Access** - Removed restrictive NetworkPolicies for learning environment
-2. **Jenkins Init Container Failures** - Fixed Kubernetes API connectivity with proper egress rules
-3. **cert-manager DNS Resolution** - Added Azure DNS configuration for external connectivity
-4. **Webhook Timeout Issues** - Added proper wait conditions and DNS configuration
-5. **Missing CI/CD Pipeline** - Added complete Jenkinsfile and RBAC configuration
-
-### Key Learnings
-- **NetworkPolicies** can be complex in learning environments - sometimes permissive is better
-- **DNS configuration** is critical in Azure environments (168.63.129.16)
-- **cert-manager** requires proper external connectivity for ACME challenges
-- **Jenkins on Kubernetes** needs special RBAC permissions for deployment automation
-- **Webhook validation** can timeout during cert-manager startup - requires patience or bypassing
-
-Your cluster is now production-ready with all components working! 🚀
-
-This project provisions a bare metal Kubernetes setup on Azure using Terraform. It creates three virtual machines: one master node and two worker nodes.
-
-## Project Structure
-
-- `main.tf`: Contains the main configuration for provisioning the virtual machines.
-- `variables.tf`: Defines input variables for the Terraform configuration.
-- `outputs.tf`: Specifies the outputs of the Terraform configuration, such as IP addresses.
-- `provider.tf`: Configures the Azure provider settings.
-- `README.md`: Documentation for the project.
-
-## Getting Started
-
-### Prerequisites
-
-- Terraform installed on your local machine.
-- An Azure account with sufficient permissions to create resources.
-
-### Initialization
-
-To initialize the Terraform configuration, run the following command in the project directory:
-
-```
-terraform init
-```
-
-### Planning
-
-To see what resources will be created, run:
-
-```
-terraform plan
-```
-
-### Applying the Configuration
-
-To provision the resources, execute:
-
-```
-terraform apply
-```
-
-You will be prompted to confirm the action. Type `yes` to proceed.
-
-### Outputs
-
-After the resources are created, you can view the output values (such as IP addresses) by running:
-
-```
-terraform output
-```
-
-## Cleanup
-
-To remove all resources created by this project, run:
-
-```
-terraform destroy
-```
-
-You will be prompted to confirm the action. Type `yes` to proceed.
+**⭐ Star this repository if it helped you build your Kubernetes infrastructure!**

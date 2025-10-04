@@ -1,12 +1,30 @@
 # Terraform files
-.terraform/
-.terraform.lock.hcl
-*.tfstate
-*.tfstate.*
-*.tfvars
-*.backup
-crash.log
-crash.*.log
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+terraform/*.backup
+terraform/crash.log
+terraform/crash.*.log
+terraform/azplan
+
+# Sensitive files
+inventory.ini
+*.pem
+*.key
+*-key.json
+config.json
+
+# Temporary files
+temp/
+*.tmp
+*.log
+
+# SSH keys
+.ssh/
+*.pem
+*.key
 
 # IDE files
 .vscode/
@@ -15,3 +33,13 @@ crash.*.log
 # OS files
 .DS_Store
 Thumbs.db
+
+# Docker
+.docker/
+
+# Local test files
+test_*.json
+*test*
+
+# Ansible
+ansible/*.retry

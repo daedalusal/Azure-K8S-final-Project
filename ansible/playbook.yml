@@ -80,33 +80,6 @@
         name: kubectl
         selection: hold
 
-    - name: Create keyrings directory for Helm
-      file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: '0755'
-
-    - name: Download Helm GPG key and add to keyring
-      shell: |
-        curl -fsSL https://packages.buildkite.com/helm-linux/helm-debian/gpgkey | gpg --dearmor | tee /usr/share/keyrings/helm.gpg > /dev/null
-      args:
-        creates: /usr/share/keyrings/helm.gpg
-
-    - name: Add Helm apt repository
-      apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/helm.gpg] https://packages.buildkite.com/helm-linux/helm-debian/any/ any main"
-        state: present
-        filename: helm-stable-debian.list
-
-    - name: Update apt cache after adding Helm repo
-      apt:
-        update_cache: yes
-
-    - name: Install Helm
-      apt:
-        name: helm
-        state: present
-
     - name: Install containerd
       apt:
         name: containerd
@@ -401,182 +374,142 @@
       args:
         creates: /etc/kubernetes/kubelet.conf
 
-- name: Deploy Jenkins in Kubernetes using Helm
+- name: Deploy Custom Jenkins with Docker Hub Image
   hosts: master
   become: yes
   tasks:
-    - name: Uninstall existing Jenkins release if present
-      shell: |
-        helm uninstall jenkins --namespace jenkins || true
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      args:
-        executable: /bin/bash
-
-    - name: Add local-path StorageClass for dynamic PVCs
-      shell: |
-        kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/master/deploy/local-path-storage.yaml
-        kubectl patch storageclass local-path -p '{"metadata": {"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      args:
-        creates: /tmp/local-path-storageclass-applied
-
-    - name: Wait for local-path provisioner pods to be ready
-      shell: |
-        kubectl wait --for=condition=Ready pod -l app=local-path-provisioner -n local-path-storage --timeout=120s
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      register: local_path_ready
-      failed_when: local_path_ready.rc != 0
-
-    - name: Add Jenkins Helm repo
-      command: helm repo add jenkins https://charts.jenkins.io
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      args:
-        creates: /root/.cache/helm/repository/jenkins-index.yaml
-
-    - name: Update Helm repos
-      command: helm repo update
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-
     - name: Ensure jenkins namespace exists
       shell: |
         kubectl get namespace jenkins || kubectl create namespace jenkins
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
-      register: jenkins_ns
-      ignore_errors: yes
 
-    - name: Ensure Jenkins PVC exists (idempotent)
+    - name: Deploy Custom Jenkins using Docker Hub image
       shell: |
         cat <<'EOF' | kubectl apply -f -
-        apiVersion: v1
-        kind: PersistentVolumeClaim
+        apiVersion: apps/v1
+        kind: Deployment
         metadata:
-          name: jenkins
+          name: custom-jenkins
           namespace: jenkins
+          labels:
+            app: custom-jenkins
         spec:
-          accessModes:
-            - ReadWriteOnce
-          resources:
-            requests:
-              storage: 8Gi
-          storageClassName: local-path
-        EOF
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      args:
-        executable: /bin/bash
-
-    - name: Ensure PVC has Helm ownership labels/annotations so Helm can adopt it
-      shell: |
-        if kubectl get pvc jenkins -n jenkins >/dev/null 2>&1; then
-          kubectl label pvc jenkins -n jenkins app.kubernetes.io/managed-by=Helm --overwrite || true
-          kubectl annotate pvc jenkins -n jenkins meta.helm.sh/release-name=jenkins --overwrite || true
-          kubectl annotate pvc jenkins -n jenkins meta.helm.sh/release-namespace=jenkins --overwrite || true
-        else
-          echo "PVC jenkins does not exist yet; skipping labels/annotations"
-        fi
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      args:
-        executable: /bin/bash
-
-    - name: Install Jenkins via Helm without problematic plugins to avoid DNS/TLS issues
-      command: >
-        helm install jenkins jenkins/jenkins
-        --namespace jenkins
-        --set controller.persistence.enabled=true
-        --set controller.persistence.storageClass=local-path
-        --set controller.persistence.size=8Gi
-        --set controller.installPlugins=""
-        --set controller.initializeOnce=true
-        --set controller.agent.image=jenkins/inbound-agent
-        --set controller.agent.tag=latest
-        --set controller.agent.resources.requests.cpu=100m
-        --set controller.agent.resources.requests.memory=256Mi
-        --set controller.agent.resources.limits.cpu=500m
-        --set controller.agent.resources.limits.memory=512Mi
-        --set controller.agent.enabled=true
-        --set controller.agent.customJenkinsLabels=k8s-agent
-        --set controller.agent.podRetention=Never
-        --set controller.dnsPolicy=ClusterFirst
-        --set controller.dnsConfig.nameservers[0]=168.63.129.16
-        --set controller.dnsConfig.nameservers[1]=8.8.8.8
-        --set controller.dnsConfig.searches[0]=jenkins.svc.cluster.local
-        --set controller.dnsConfig.searches[1]=svc.cluster.local
-        --set controller.dnsConfig.searches[2]=cluster.local
-        --set controller.dnsConfig.options[0].name=ndots
-        --set controller.dnsConfig.options[0].value=2
-        --set controller.dnsConfig.options[1].name=edns0
-        --set controller.hostNetwork=false
-        --set controller.serviceType=ClusterIP
-        --set controller.javaOpts="-Dhudson.model.DownloadService.noSignatureCheck=true -Dhudson.plugins.git.GitSCM.ALLOW_LOCAL_CHECKOUT=true -Djenkins.install.runSetupWizard=false"
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      args:
-        creates: /tmp/jenkins-helm-installed
-
-    - name: Create Jenkins ConfigMap for plugin installation workaround
-      shell: |
-        kubectl apply -f - <<EOF
+          replicas: 1
+          selector:
+            matchLabels:
+              app: custom-jenkins
+          template:
+            metadata:
+              labels:
+                app: custom-jenkins
+            spec:
+              containers:
+              - name: jenkins
+                image: yourusername/jenkins-azure-dns-fix:latest
+                imagePullPolicy: Always
+                ports:
+                - containerPort: 8080
+                  name: http
+                - containerPort: 50000
+                  name: agent
+                env:
+                - name: JAVA_OPTS
+                  value: "-Djenkins.install.runSetupWizard=false -Dhudson.model.DownloadService.noSignatureCheck=true -Djava.net.preferIPv4Stack=true"
+                - name: JENKINS_OPTS
+                  value: "--httpPort=8080"
+                volumeMounts:
+                - name: jenkins-home
+                  mountPath: /var/jenkins_home
+                resources:
+                  requests:
+                    memory: "512Mi"
+                    cpu: "500m"
+                  limits:
+                    memory: "2Gi"
+                    cpu: "2000m"
+                livenessProbe:
+                  httpGet:
+                    path: /login
+                    port: 8080
+                  initialDelaySeconds: 60
+                  periodSeconds: 30
+                readinessProbe:
+                  httpGet:
+                    path: /login
+                    port: 8080
+                  initialDelaySeconds: 30
+                  periodSeconds: 10
+              volumes:
+              - name: jenkins-home
+                emptyDir: {}
+              restartPolicy: Always
+        ---
         apiVersion: v1
-        kind: ConfigMap
+        kind: Service
         metadata:
-          name: jenkins-plugin-config
+          name: custom-jenkins
           namespace: jenkins
-        data:
-          plugins.txt: |
-            # Minimal essential plugins that should be available offline
-            workflow-aggregator:596.v8c21c963d92d
-            kubernetes:4246.v5a_12b_1fe120a_
-            git:5.4.1
-            configuration-as-code:1810.v9b_c30a_249a_4c
+          labels:
+            app: custom-jenkins
+        spec:
+          selector:
+            app: custom-jenkins
+          ports:
+          - name: http
+            port: 8080
+            targetPort: 8080
+          - name: agent
+            port: 50000
+            targetPort: 50000
+          type: ClusterIP
+        ---
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: jenkins-ingress
+          namespace: jenkins
+          annotations:
+            nginx.ingress.kubernetes.io/ssl-redirect: "true"
+            nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+            cert-manager.io/cluster-issuer: "letsencrypt-prod"
+        spec:
+          ingressClassName: nginx
+          tls:
+          - hosts:
+            - jenkins.yourdomain.com
+            secretName: jenkins-tls
+          rules:
+          - host: jenkins.yourdomain.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: custom-jenkins
+                    port:
+                      number: 8080
         EOF
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
-      ignore_errors: yes
+      args:
+        executable: /bin/bash
 
-    - name: Wait for Jenkins to be ready
+    - name: Wait for Jenkins deployment to be ready
       shell: |
-        kubectl rollout status statefulSet/jenkins -n jenkins --timeout=600s
+        kubectl wait --for=condition=Available deployment/custom-jenkins -n jenkins --timeout=300s
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
-      register: rollout_status
-      retries: 15
+      register: jenkins_ready
+      retries: 3
       delay: 30
-      until: rollout_status.rc == 0
 
-    - name: Verify Jenkins pod is running without init container failures
-      shell: |
-        echo "=== Jenkins Pod Status ==="
-        kubectl get pods -n jenkins
-        echo "=== Jenkins Pod Events ==="
-        kubectl get events -n jenkins --sort-by='.lastTimestamp' | tail -10
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      register: jenkins_status_check
-      ignore_errors: yes
 
-    - name: Display Jenkins status
-      debug:
-        var: jenkins_status_check.stdout_lines
 
-    - name: Test DNS resolution from within Jenkins namespace
-      shell: |
-        kubectl run dns-test-jenkins --image=busybox:1.28 --rm -it --restart=Never -n jenkins --command -- nslookup mirrors.updates.jenkins.io || true
-        kubectl run dns-test-jenkins2 --image=busybox:1.28 --rm -it --restart=Never -n jenkins --command -- nslookup updates.jenkins.io || true
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      register: jenkins_dns_test
-      ignore_errors: yes
 
-    - name: Display Jenkins DNS test results
-      debug:
-        var: jenkins_dns_test.stdout_lines
+
+
 
     - name: Get Jenkins admin password if deployment succeeded
       shell: |
@@ -686,46 +619,6 @@
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
 
-- name: Deploy Python REST API in Kubernetes using Helm
-  hosts: master
-  become: yes
-  tasks:
-    - name: Create namespace for API
-      command: kubectl create namespace python-api
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      args:
-        creates: /tmp/python-api-namespace-created
-      register: api_ns
-      failed_when: false
-
-    - name: Copy k8s-deploy.yml to master node
-      copy:
-        src: k8s-deploy.yml
-        dest: /home/azureuser/k8s-deploy.yml
-        owner: azureuser
-        group: azureuser
-        mode: '0644'
-
-    - name: Deploy Python REST API via kubectl
-      shell: |
-        kubectl apply -f /home/azureuser/k8s-deploy.yml
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      register: python_api_deploy
-      retries: 3
-      delay: 10
-
-    - name: Wait for Python REST API deployment to be ready
-      shell: |
-        kubectl rollout status deployment/python-rest-api -n python-api --timeout=300s
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      register: api_rollout_status
-      retries: 10
-      delay: 30
-      until: api_rollout_status.rc == 0
-
 - name: Deploy NGINX ingress controller in Kubernetes using Helm
   hosts: master
   become: yes
@@ -755,24 +648,53 @@
       command: helm repo add jetstack https://charts.jetstack.io
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
 
     - name: Update Helm repos
       command: helm repo update
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
 
-    - name: Install cert-manager
+    - name: Remove existing cert-manager if present (for clean installation)
+      shell: |
+        helm uninstall cert-manager --namespace cert-manager || true
+        kubectl delete namespace cert-manager || true
+        sleep 30
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
+
+    - name: Install cert-manager (without --wait to avoid hanging)
       command: >
         helm install cert-manager jetstack/cert-manager
         --namespace cert-manager --create-namespace
         --set installCRDs=true
-        --wait --timeout=10m
+        --set global.leaderElection.namespace=cert-manager
+        --timeout=5m
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
+      register: cert_manager_install
+      retries: 3
+      delay: 30
+      until: cert_manager_install.rc == 0
 
-    - name: Wait for cert-manager webhook to be ready
+    - name: Wait for cert-manager pods to be created
       shell: |
-        kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=300s
+        timeout 300 bash -c 'until kubectl get pods -n cert-manager | grep cert-manager; do sleep 5; done'
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
+
+    - name: Wait for cert-manager controller to be ready (with timeout)
+      shell: |
+        kubectl wait --for=condition=Ready pod -l app=cert-manager -n cert-manager --timeout=300s || echo "Timeout waiting for cert-manager controller"
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
+
+    - name: Wait for cert-manager webhook to be ready (with timeout)
+      shell: |
+        kubectl wait --for=condition=Ready pod -l app=webhook -n cert-manager --timeout=300s || echo "Timeout waiting for cert-manager webhook"
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
@@ -826,6 +748,76 @@
                 ingress:
                   class: nginx
         EOF
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+
+    - name: Create Jenkins Ingress with HTTPS
+      shell: |
+        kubectl apply -f - <<EOF
+        apiVersion: networking.k8s.io/v1
+        kind: Ingress
+        metadata:
+          name: jenkins-ingress
+          namespace: jenkins
+          annotations:
+            kubernetes.io/ingress.class: "nginx"
+            cert-manager.io/cluster-issuer: "letsencrypt-prod"
+            nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+            nginx.ingress.kubernetes.io/rewrite-target: /
+            # Jenkins-specific annotations
+            nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+            nginx.ingress.kubernetes.io/proxy-request-buffering: "off"
+            nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+            nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+        spec:
+          tls:
+          - hosts:
+            - jenkins.yourdomain.com
+            secretName: jenkins-tls
+          rules:
+          - host: jenkins.yourdomain.com
+            http:
+              paths:
+              - path: /
+                pathType: Prefix
+                backend:
+                  service:
+                    name: jenkins
+                    port:
+                      number: 8080
+        EOF
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+
+    - name: Wait for Jenkins Ingress to be ready
+      shell: |
+        kubectl wait --for=condition=Ready ingress/jenkins-ingress -n jenkins --timeout=300s
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
+
+    - name: Display Jenkins access information
+      shell: |
+        echo "=================================="
+        echo "🚀 JENKINS CI/CD PIPELINE READY!"
+        echo "=================================="
+        echo ""
+        echo "📍 Access Jenkins at:"
+        echo "   HTTPS: https://jenkins.yourdomain.com"
+        echo "   (Automatic TLS certificate from Let's Encrypt)"
+        echo ""
+        echo "🔑 Get Jenkins admin password:"
+        echo "   kubectl get secret jenkins -n jenkins -o jsonpath='{.data.jenkins-admin-password}' | base64 -d"
+        echo ""
+        echo "⚠️  IMPORTANT: Configure DNS first!"
+        echo "   Add A record: jenkins.yourdomain.com → {{ ansible_default_ipv4.address }}"
+        echo ""
+        echo "✅ Features enabled:"
+        echo "   - NGINX Ingress Controller"
+        echo "   - cert-manager with Let's Encrypt"
+        echo "   - Automatic HTTPS certificates"
+        echo "   - Jenkins with Kubernetes agents"
+        echo ""
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes

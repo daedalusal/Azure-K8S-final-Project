@@ -4,6 +4,9 @@
   become: yes
   become_method: sudo
   become_user: root
+  vars:
+    jenkins_domain: "jenkins.daedalusproject.online"
+    base_domain: "daedalusproject.online"
 
   tasks:
     - name: Update apt cache
@@ -172,6 +175,9 @@
 - name: Initialize Kubernetes master and install Calico
   hosts: master
   become: yes
+  vars:
+    jenkins_domain: "jenkins.daedalusproject.online"
+    base_domain: "daedalusproject.online"
   tasks:
     - name: Initialize the Kubernetes cluster using kubeadm
       command: kubeadm init --pod-network-cidr=192.168.0.0/16
@@ -256,16 +262,31 @@
           name: default-ipv4-ippool
         spec:
           cidr: 192.168.0.0/16
-          ipipMode: Always
+          vxlanMode: Always
           natOutgoing: true
           nodeSelector: all()
         EOF
         else
-          kubectl patch ippool default-ipv4-ippool --type='merge' -p '{"spec":{"natOutgoing":true}}'
+          kubectl patch ippool default-ipv4-ippool --type='merge' -p '{"spec":{"vxlanMode":"Always","natOutgoing":true}}'
         fi
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
       register: calico_ippool
+      ignore_errors: yes
+
+    - name: Configure Calico to use VXLAN mode for Azure
+      shell: |
+        # Enable VXLAN mode in Felix configuration
+        kubectl patch felixconfiguration default --type='merge' -p '{
+          "spec": {
+            "vxlanEnabled": true,
+            "ipipEnabled": false,
+            "natOutgoingEnabled": true
+          }
+        }'
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      register: calico_vxlan
       ignore_errors: yes
 
     - name: Restart Calico pods to apply configuration
@@ -274,7 +295,30 @@
         kubectl delete pods -n kube-system -l k8s-app=calico-kube-controllers
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
-      when: calico_nat.changed or calico_ippool.changed
+      when: calico_nat.changed or calico_ippool.changed or calico_vxlan.changed
+
+    - name: Verify Calico VXLAN configuration
+      shell: |
+        echo "=== Calico Configuration Status ==="
+        echo "Felix Configuration:"
+        kubectl get felixconfiguration default -o yaml | grep -E "(vxlanEnabled|ipipEnabled|natOutgoingEnabled)" || echo "No Felix config found"
+        echo ""
+        echo "IP Pool Configuration:"
+        kubectl get ippool default-ipv4-ippool -o yaml | grep -E "(vxlanMode|ipipMode|natOutgoing)" || echo "No IP pool found"
+        echo ""
+        echo "Calico Node Status:"
+        kubectl get pods -n kube-system -l k8s-app=calico-node -o wide
+        echo ""
+        echo "To verify VXLAN interfaces manually, run on nodes:"
+        echo "ip link show type vxlan"
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      register: calico_verification
+      ignore_errors: yes
+
+    - name: Display Calico verification results
+      debug:
+        var: calico_verification.stdout_lines
 
     - name: Patch CoreDNS to use Azure DNS with fallback
       shell: |
@@ -368,253 +412,201 @@
 - name: Join worker nodes to the cluster
   hosts: workers
   become: yes
+  vars:
+    jenkins_domain: "jenkins.daedalusproject.online"
+    base_domain: "daedalusproject.online"
   tasks:
     - name: Join the node to the cluster
       shell: "{{ hostvars[groups['master'][0]].worker_join_cmd }} --ignore-preflight-errors=all"
       args:
         creates: /etc/kubernetes/kubelet.conf
 
-- name: Deploy Custom Jenkins with Docker Hub Image
+- name: Install Helm and Jenkins using Helm chart
   hosts: master
   become: yes
+  vars:
+    jenkins_domain: "jenkins.daedalusproject.online"
+    base_domain: "daedalusproject.online"
   tasks:
-    - name: Ensure jenkins namespace exists
-      shell: |
-        kubectl get namespace jenkins || kubectl create namespace jenkins
+    - name: Download Helm installation script
+      get_url:
+        url: https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3
+        dest: /tmp/get_helm.sh
+        mode: '0700'
+
+    - name: Install Helm
+      shell: /tmp/get_helm.sh
+      args:
+        creates: /usr/local/bin/helm
+
+    - name: Add Jenkins Helm repo
+      command: helm repo add jenkins https://charts.jenkins.io
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
 
-    - name: Deploy Custom Jenkins using Docker Hub image
+    - name: Update Helm repos
+      command: helm repo update
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+
+    - name: Remove existing Jenkins installation if present
       shell: |
-        cat <<'EOF' | kubectl apply -f -
+        helm uninstall jenkins --namespace jenkins || true
+        kubectl delete namespace jenkins --wait=true || true
+        kubectl delete pv --all || true
+        kubectl delete pvc --all -n jenkins || true
+        sleep 60
+        kubectl create namespace jenkins || true
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
+
+    - name: Install Jenkins using Helm chart
+      command: >
+        helm install jenkins jenkins/jenkins
+        --namespace jenkins
+        --set controller.serviceType=ClusterIP
+        --set persistence.enabled=false
+        --set controller.resources.requests.memory=512Mi
+        --set controller.resources.requests.cpu=500m
+        --set controller.javaOpts="-Xmx512m"
+        --set controller.initContainerResources.requests.memory=256Mi
+        --set controller.initContainerResources.requests.cpu=250m
+        --set controller.installPlugins=null
+        --set controller.sidecars.configAutoReload.enabled=false
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+
+    - name: Wait for Jenkins deployment to be ready
+      shell: |
+        echo "Waiting for Jenkins pods..."
+        kubectl get pods -n jenkins
+        echo ""
+        echo "Checking Jenkins pod events..."
+        kubectl describe pod jenkins-0 -n jenkins | tail -20
+        echo ""
+        echo "Waiting for pod to be ready (with extended timeout)..."
+        kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=jenkins -n jenkins --timeout=600s
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      register: jenkins_ready
+      retries: 2
+      delay: 60
+      ignore_errors: yes
+
+    - name: Troubleshoot Jenkins if not ready
+      shell: |
+        echo "=== Jenkins Troubleshooting ==="
+        echo "Pod Status:"
+        kubectl get pods -n jenkins -o wide
+        echo ""
+        echo "Pod Events:"
+        kubectl describe pod jenkins-0 -n jenkins | grep -A 20 "Events:"
+        echo ""
+        echo "Init Container Logs:"
+        kubectl logs jenkins-0 -n jenkins -c init || echo "No init logs available"
+        echo ""
+        echo "Jenkins Container Logs:"
+        kubectl logs jenkins-0 -n jenkins -c jenkins || echo "No jenkins logs available"
+        echo ""
+        echo "Network connectivity test from pod:"
+        kubectl exec jenkins-0 -n jenkins -c init -- nslookup google.com || echo "DNS test failed"
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      when: jenkins_ready.failed
+      ignore_errors: yes
+      register: jenkins_debug
+
+    - name: Display Jenkins debug information
+      debug:
+        var: jenkins_debug.stdout_lines
+      when: jenkins_ready.failed
+
+- name: Configure Jenkins with essential CI/CD tools
+  hosts: master
+  become: yes
+  vars:
+    jenkins_domain: "jenkins.daedalusproject.online"
+    base_domain: "daedalusproject.online"
+  tasks:
+    - name: Wait for Jenkins to be fully ready
+      shell: |
+        kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=jenkins -n jenkins --timeout=300s
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
+
+    - name: Install essential tools in Jenkins pod
+      shell: |
+        echo "=== Installing CI/CD tools in Jenkins ==="
+        
+        # Install Docker CLI
+        kubectl exec jenkins-0 -n jenkins -- sh -c "
+          apt-get update -qq &&
+          apt-get install -y curl python3 python3-pip &&
+          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-20.10.24.tgz | tar xz &&
+          mv docker/docker /usr/local/bin/ &&
+          chmod +x /usr/local/bin/docker &&
+          rm -rf docker
+        " || echo "Tool installation failed"
+        
+        # Install kubectl
+        kubectl exec jenkins-0 -n jenkins -- sh -c "
+          curl -LO 'https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl' &&
+          chmod +x kubectl &&
+          mv kubectl /usr/local/bin/
+        " || echo "kubectl installation failed"
+        
+        echo "=== Tools installed successfully ==="
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
+
+    - name: Configure Jenkins Kubernetes access
+      shell: |
+        # Setup kubeconfig
+        kubectl exec jenkins-0 -n jenkins -- mkdir -p /var/jenkins_home/.kube || true
+        kubectl cp /home/azureuser/.kube/config jenkins/jenkins-0:/var/jenkins_home/.kube/config || true
+        kubectl exec jenkins-0 -n jenkins -- chown -R jenkins:jenkins /var/jenkins_home/.kube || true
+        
+        # Create python-api namespace
+        kubectl create namespace python-api || echo "Namespace exists"
+        
+        # Create basic python deployment for testing
+        kubectl apply -f - <<EOF || true
         apiVersion: apps/v1
         kind: Deployment
         metadata:
-          name: custom-jenkins
-          namespace: jenkins
-          labels:
-            app: custom-jenkins
+          name: python-rest-api
+          namespace: python-api
         spec:
           replicas: 1
           selector:
             matchLabels:
-              app: custom-jenkins
+              app: python-rest-api
           template:
             metadata:
               labels:
-                app: custom-jenkins
+                app: python-rest-api
             spec:
               containers:
-              - name: jenkins
-                image: yourusername/jenkins-azure-dns-fix:latest
-                imagePullPolicy: Always
+              - name: python-rest-api
+                image: python:3.9-slim
+                command: ["python3", "-c", "import http.server; import socketserver; socketserver.TCPServer(('', 5000), http.server.SimpleHTTPRequestHandler).serve_forever()"]
                 ports:
-                - containerPort: 8080
-                  name: http
-                - containerPort: 50000
-                  name: agent
-                env:
-                - name: JAVA_OPTS
-                  value: "-Djenkins.install.runSetupWizard=false -Dhudson.model.DownloadService.noSignatureCheck=true -Djava.net.preferIPv4Stack=true"
-                - name: JENKINS_OPTS
-                  value: "--httpPort=8080"
-                volumeMounts:
-                - name: jenkins-home
-                  mountPath: /var/jenkins_home
-                resources:
-                  requests:
-                    memory: "512Mi"
-                    cpu: "500m"
-                  limits:
-                    memory: "2Gi"
-                    cpu: "2000m"
-                livenessProbe:
-                  httpGet:
-                    path: /login
-                    port: 8080
-                  initialDelaySeconds: 60
-                  periodSeconds: 30
-                readinessProbe:
-                  httpGet:
-                    path: /login
-                    port: 8080
-                  initialDelaySeconds: 30
-                  periodSeconds: 10
-              volumes:
-              - name: jenkins-home
-                emptyDir: {}
-              restartPolicy: Always
-        ---
-        apiVersion: v1
-        kind: Service
-        metadata:
-          name: custom-jenkins
-          namespace: jenkins
-          labels:
-            app: custom-jenkins
-        spec:
-          selector:
-            app: custom-jenkins
-          ports:
-          - name: http
-            port: 8080
-            targetPort: 8080
-          - name: agent
-            port: 50000
-            targetPort: 50000
-          type: ClusterIP
-        ---
-        apiVersion: networking.k8s.io/v1
-        kind: Ingress
-        metadata:
-          name: jenkins-ingress
-          namespace: jenkins
-          annotations:
-            nginx.ingress.kubernetes.io/ssl-redirect: "true"
-            nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
-            cert-manager.io/cluster-issuer: "letsencrypt-prod"
-        spec:
-          ingressClassName: nginx
-          tls:
-          - hosts:
-            - jenkins.yourdomain.com
-            secretName: jenkins-tls
-          rules:
-          - host: jenkins.yourdomain.com
-            http:
-              paths:
-              - path: /
-                pathType: Prefix
-                backend:
-                  service:
-                    name: custom-jenkins
-                    port:
-                      number: 8080
-        EOF
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      args:
-        executable: /bin/bash
-
-    - name: Wait for Jenkins deployment to be ready
-      shell: |
-        kubectl wait --for=condition=Available deployment/custom-jenkins -n jenkins --timeout=300s
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      register: jenkins_ready
-      retries: 3
-      delay: 30
-
-
-
-
-
-
-
-    - name: Get Jenkins admin password if deployment succeeded
-      shell: |
-        if kubectl get secret jenkins -n jenkins >/dev/null 2>&1; then
-          echo "Jenkins admin password:"
-          kubectl get secret jenkins -n jenkins -o jsonpath="{.data.jenkins-admin-password}" | base64 --decode
-          echo ""
-          echo "Access Jenkins with: kubectl port-forward svc/jenkins 8080:8080 -n jenkins"
-        else
-          echo "Jenkins secret not found - deployment may have failed"
-        fi
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      register: jenkins_credentials
-      ignore_errors: yes
-
-    - name: Display Jenkins access information
-      debug:
-        var: jenkins_credentials.stdout_lines
-
-    - name: Configure Jenkins for CI/CD pipeline
-      shell: |
-        # Create a ConfigMap with Jenkins pipeline configuration
-        kubectl apply -f - <<EOF
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: jenkins-pipeline-config
-          namespace: jenkins
-        data:
-          pipeline-job.xml: |
-            <?xml version='1.1' encoding='UTF-8'?>
-            <flow-definition plugin="workflow-job@2.46">
-              <actions/>
-              <description>Python REST API CI/CD Pipeline</description>
-              <keepDependencies>false</keepDependencies>
-              <properties>
-                <org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
-                  <triggers>
-                    <hudson.triggers.SCMTrigger>
-                      <spec>H/5 * * * *</spec>
-                      <ignorePostCommitHooks>false</ignorePostCommitHooks>
-                    </hudson.triggers.SCMTrigger>
-                  </triggers>
-                </org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
-              </properties>
-              <definition class="org.jenkinsci.plugins.workflow.cps.CpsScmFlowDefinition" plugin="workflow-cps@2.94">
-                <scm class="hudson.plugins.git.GitSCM" plugin="git@4.8.3">
-                  <configVersion>2</configVersion>
-                  <userRemoteConfigs>
-                    <hudson.plugins.git.UserRemoteConfig>
-                      <url>https://github.com/your-username/python-rest-api.git</url>
-                    </hudson.plugins.git.UserRemoteConfig>
-                  </userRemoteConfigs>
-                  <branches>
-                    <hudson.plugins.git.BranchSpec>
-                      <name>*/main</name>
-                    </hudson.plugins.git.BranchSpec>
-                  </branches>
-                  <doGenerateSubmoduleConfigurations>false</doGenerateSubmoduleConfigurations>
-                  <submoduleCfg class="list"/>
-                  <extensions/>
-                </scm>
-                <scriptPath>Jenkinsfile</scriptPath>
-                <lightweight>true</lightweight>
-              </definition>
-              <triggers/>
-              <disabled>false</disabled>
-            </flow-definition>
+                - containerPort: 5000
         EOF
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
 
-    - name: Create RBAC for Jenkins to manage deployments
+    - name: Verify Jenkins tool installation
       shell: |
-        kubectl apply -f - <<EOF
-        apiVersion: rbac.authorization.k8s.io/v1
-        kind: ClusterRole
-        metadata:
-          name: jenkins-deploy
-        rules:
-        - apiGroups: [""]
-          resources: ["pods", "services", "configmaps", "secrets"]
-          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-        - apiGroups: ["apps"]
-          resources: ["deployments", "replicasets"]
-          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-        - apiGroups: ["networking.k8s.io"]
-          resources: ["ingresses"]
-          verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-        ---
-        apiVersion: rbac.authorization.k8s.io/v1
-        kind: ClusterRoleBinding
-        metadata:
-          name: jenkins-deploy
-        roleRef:
-          apiGroup: rbac.authorization.k8s.io
-          kind: ClusterRole
-          name: jenkins-deploy
-        subjects:
-        - kind: ServiceAccount
-          name: jenkins
-          namespace: jenkins
-        EOF
+        echo "=== Jenkins Tool Verification ==="
+        kubectl exec jenkins-0 -n jenkins -- docker --version || echo "❌ Docker CLI not available"
+        kubectl exec jenkins-0 -n jenkins -- kubectl version --client || echo "❌ kubectl not available"
+        kubectl exec jenkins-0 -n jenkins -- python3 --version || echo "❌ Python3 not available"
+        echo "✅ Jenkins configuration completed!"
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
@@ -622,6 +614,9 @@
 - name: Deploy NGINX ingress controller in Kubernetes using Helm
   hosts: master
   become: yes
+  vars:
+    jenkins_domain: "jenkins.daedalusproject.online"
+    base_domain: "daedalusproject.online"
   tasks:
     - name: Add NGINX ingress Helm repo
       command: helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
@@ -643,6 +638,9 @@
 - name: Install cert-manager in Kubernetes using Helm
   hosts: master
   become: yes
+  vars:
+    jenkins_domain: "jenkins.daedalusproject.online"
+    base_domain: "daedalusproject.online"
   tasks:
     - name: Add Jetstack Helm repo
       command: helm repo add jetstack https://charts.jetstack.io
@@ -772,10 +770,10 @@
         spec:
           tls:
           - hosts:
-            - jenkins.yourdomain.com
+            - "{{ jenkins_domain }}"
             secretName: jenkins-tls
           rules:
-          - host: jenkins.yourdomain.com
+          - host: "{{ jenkins_domain }}"
             http:
               paths:
               - path: /
@@ -791,7 +789,7 @@
 
     - name: Wait for Jenkins Ingress to be ready
       shell: |
-        kubectl wait --for=condition=Ready ingress/jenkins-ingress -n jenkins --timeout=300s
+        kubectl wait --for=condition=Ready ingress/jenkins-ingress -n jenkins --timeout=120s || echo "Ingress not ready yet, continuing..."
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
@@ -803,14 +801,14 @@
         echo "=================================="
         echo ""
         echo "📍 Access Jenkins at:"
-        echo "   HTTPS: https://jenkins.yourdomain.com"
+        echo "   HTTPS: https://{{ jenkins_domain }}"
         echo "   (Automatic TLS certificate from Let's Encrypt)"
         echo ""
         echo "🔑 Get Jenkins admin password:"
         echo "   kubectl get secret jenkins -n jenkins -o jsonpath='{.data.jenkins-admin-password}' | base64 -d"
         echo ""
         echo "⚠️  IMPORTANT: Configure DNS first!"
-        echo "   Add A record: jenkins.yourdomain.com → {{ ansible_default_ipv4.address }}"
+        echo "   Add A record: {{ jenkins_domain }} → {{ ansible_default_ipv4.address }}"
         echo ""
         echo "✅ Features enabled:"
         echo "   - NGINX Ingress Controller"

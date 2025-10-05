@@ -2,7 +2,7 @@
 
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30-blue.svg)](https://kubernetes.io/)
 [![Jenkins](https://img.shields.io/badge/Jenkins-2.516.3-red.svg)](https://jenkins.io/)
-[![Terraform](https://img.shields.io/badge/Terraform-Azur├── 🔧 scripts/            # Automation Scripts
+[![Terraform](https://img.shields.io/badge/Terraform-Azur])├── 🔧 scripts/            # Automation Scripts
 │   ├── build-and-push.ps1 # PowerShell Docker build script
 │   └── build-and-push.sh  # Bash Docker build script
 └── 📚 Documentation

@@ -150,27 +150,7 @@
     - name: Apply sysctl settings from k8s.conf
       command: sysctl --system
 
-    - name: Ensure systemd-resolved is configured properly
-      lineinfile:
-        path: /etc/systemd/resolved.conf
-        regexp: '^#?DNS='
-        line: 'DNS=168.63.129.16 8.8.8.8'
-        state: present
-      notify: restart systemd-resolved
-
-    - name: Ensure systemd-resolved fallback DNS
-      lineinfile:
-        path: /etc/systemd/resolved.conf
-        regexp: '^#?FallbackDNS='
-        line: 'FallbackDNS=1.1.1.1 8.8.4.4'
-        state: present
-      notify: restart systemd-resolved
-
   handlers:
-    - name: restart systemd-resolved
-      service:
-        name: systemd-resolved
-        state: restarted
 
 - name: Initialize Kubernetes master and install Calico
   hosts: master
@@ -320,44 +300,7 @@
       debug:
         var: calico_verification.stdout_lines
 
-    - name: Patch CoreDNS to use Azure DNS with fallback
-      shell: |
-        cat <<EOF | kubectl apply -f -
-        apiVersion: v1
-        kind: ConfigMap
-        metadata:
-          name: coredns
-          namespace: kube-system
-        data:
-          Corefile: |
-            .:53 {
-                errors
-                health {
-                   lameduck 5s
-                }
-                ready
-                kubernetes cluster.local in-addr.arpa ip6.arpa {
-                   pods insecure
-                   fallthrough in-addr.arpa ip6.arpa
-                   ttl 30
-                }
-                prometheus :9153
-                forward . 168.63.129.16 8.8.8.8 1.1.1.1 {
-                   max_concurrent 1000
-                   policy sequential
-                   health_check 5s
-                }
-                cache 30 {
-                   disable success cluster.local
-                   disable denial cluster.local
-                }
-                loop
-                reload
-                loadbalance
-            }
-        EOF
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
+
 
     - name: Create jenkins namespace
       shell: |
@@ -374,10 +317,7 @@
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
 
-    - name: Restart CoreDNS
-      shell: kubectl rollout restart deployment coredns -n kube-system
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
+
 
     - name: Verify cluster status after setup
       shell: |
@@ -697,28 +637,7 @@
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
 
-    - name: Configure cert-manager with Azure DNS
-      shell: |
-        kubectl patch deployment cert-manager -n cert-manager -p '{
-          "spec": {
-            "template": {
-              "spec": {
-                "dnsPolicy": "ClusterFirst",
-                "dnsConfig": {
-                  "nameservers": ["168.63.129.16", "8.8.8.8"],
-                  "searches": ["cert-manager.svc.cluster.local", "svc.cluster.local", "cluster.local"],
-                  "options": [
-                    {"name": "ndots", "value": "2"},
-                    {"name": "edns0"}
-                  ]
-                }
-              }
-            }
-          }
-        }'
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      ignore_errors: yes
+
 
     - name: Wait for cert-manager to restart with DNS configuration
       shell: |

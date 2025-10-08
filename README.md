@@ -2,7 +2,11 @@
 
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.30-blue.svg)](https://kubernetes.io/)
 [![Jenkins](https://img.shields.io/badge/Jenkins-2.516.3-red.svg)](https://jenkins.io/)
-[![Terraform](https://img.shields.io/badge/Terraform-1.0-purple.svg)](https://terraform.io/)
+[![Terraform](https://img.shields.io/badge/Terraform-Azur])├── 🔧 scripts/            # Automation Scripts
+│   ├── build-and-push.ps1 # PowerShell Docker build script
+│   └── build-and-push.sh  # Bash Docker build script
+└── 📚 Documentation
+    └── README.md          # This file)](https://terraform.io/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 
 A complete Infrastructure-as-Code solution for deploying a production-ready Kubernetes cluster on Azure with Jenkins CI/CD pipeline, NGINX Ingress, and REST API applications.
@@ -16,7 +20,26 @@ A complete Infrastructure-as-Code solution for deploying a production-ready Kube
 - 🐳 **Containerized Apps**: Python REST API with Docker
 - 🔒 **Production Ready**: Secure, scalable, and maintainable
 
+## 🏗️ Architecture
 
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Azure Cloud                         │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐      │
+│  │ Master Node │  │ Worker 1    │  │ Worker 2    │      │
+│  │ Control     │  │ kubelet     │  │ kubelet     │      │
+│  │ Plane       │  │ containerd  │  │ containerd  │      │
+│  └─────────────┘  └─────────────┘  └─────────────┘      │
+└─────────────────────────────────────────────────────────┘
+                               │
+┌─────────────────────────────────────────────────────────┐
+│              Kubernetes Services                        │
+│  ┌─────────┐  ┌───────────┐  ┌─────────────────────┐    │
+│  │ Jenkins │  │ Python    │  │ NGINX Ingress       │    │
+│  │ CI/CD   │  │ REST API  │  │ Load Balancer       │    │
+│  └─────────┘  └───────────┘  └─────────────────────┘    │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## 🚀 Quick Start
 
@@ -67,28 +90,53 @@ Before deploying, you need to customize several files for your environment:
 
 3. **IP Addresses**: Create `ansible/inventory.ini` from the template with your VM IPs
 
-
 ### 3. Access Services
-- **Jenkins**: `https://jenkins.yourdomain.com:30443` (NodePort HTTPS)
-- **API**: `https://api.yourdomain.com:30443` (NodePort HTTPS)
+- **Jenkins**: `http://jenkins.yourdomain.com:30189`
+- **API**: `http://api.yourdomain.com:30189` Pipeline with Jenkins and cert-manager
 
-Jenkins and the API are exposed via NGINX Ingress using NodePort (30443 for HTTPS, 30080 for HTTP). Update your DNS A records to point to your master node IP.
+This project sets up a complete Kube4. **Configure CI/CD Pipeline**
 
-#### Configure CI/CD Pipeline
-1. **Access Jenkins** at `https://jenkins.yourdomain.com:30443` (with Let's Encrypt certificate)
+1. **Access Jenkins** at `https://jenkins.yourdomain.com` (HTTPS with automatic certificate)
 2. **Create a new Pipeline job**:
    - New Item → Pipeline
    - Name: `python-api-pipeline`
    - Pipeline script from SCM
    - Git URL: `<your-git-repo>`
-   - Script Path: `applications/Jenkinsfile`
+   - Script Path: `Jenkinsfile`
+
 3. **Configure Git Repository**:
-   - Push the provided `Jenkinsfile`, `Dockerfile.python`, `main.py`, and `requirements.txt` to your Git repository
+   - Push the provided `Jenkinsfile`, `Dockerfile`, `app.py`, and `requirements.txt` to your Git repository
    - Update the Git URL in the Jenkins job
+
 4. **Run the Pipeline**:
-   - The pipeline will automatically build, test, and deploy your Python API
+   - The pipeline will automatically build, test, and deploy your Python APIn Azure VMs with Jenkins for CI/CD automation, NGINX Ingress for traffic routing, and cert-manager for automatic TLS certificate management.
 
+## 🏗️ Architecture Overview
 
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Azure Cloud                            │
+│  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐ │
+│  │   Master Node   │  │  Worker Node 1  │  │  Worker Node 2  │ │
+│  │                 │  │                 │  │                 │ │
+│  │ • kubeadm       │  │ • kubelet       │  │ • kubelet       │ │
+│  │ • kubectl       │  │ • containerd    │  │ • containerd    │ │
+│  │ • etcd          │  │ • calico        │  │ • calico        │ │
+│  └─────────────────┘  └─────────────────┘  └─────────────────┘ │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                 Kubernetes Applications                     │
+│                                                             │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐   │
+│  │   Jenkins   │  │ Python API  │  │   NGINX Ingress     │   │
+│  │             │  │             │  │                     │   │
+│  │ • CI/CD     │  │ • REST API  │  │ • Load Balancer     │   │
+│  │ • Pipeline  │  │ • Flask     │  │ • TLS Termination   │   │
+│  │ • K8s Agent │  │ • Auto-scale│  │ • cert-manager      │   │
+│  └─────────────┘  └─────────────┘  └─────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+```
 
 ## 🚀 Features
 
@@ -180,36 +228,22 @@ kubectl get secret jenkins -n jenkins -o jsonpath="{.data.jenkins-admin-password
    - The pipeline will automatically build, test, and deploy your Python API
    - Monitor the deployment in Jenkins dashboard
 
-k8s-terraform/
-
 ## 📁 Project Structure
 
 ```
-Azure-K8S-final-Project/
-├── terraform/           # Infrastructure as Code (Azure VMs)
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── provider.tf
-├── ansible/             # Configuration Management
-│   ├── playbook.yml     # Cluster setup, Jenkins, Ingress
-│   ├── inventory.tpl    # Inventory template
-├── applications/        # Application Code
-│   ├── Dockerfile.python
-│   ├── Dockerfile.jenkins
-│   ├── main.py
-│   ├── requirements.txt
-│   └── Jenkinsfile
-├── kubernetes/          # K8s Manifests
-│   ├── python-api-deployment.yaml
-│   ├── python-api-service.yaml
-│   ├── python-api-ingress.yaml
-│   ├── jenkins-ingress.yaml
-│   └── nginx-ingress-nodeport-80.yaml
-├── scripts/             # Automation Scripts
-│   ├── build-and-push.ps1
-│   └── build-and-push.sh
-└── README.md            # This file
+k8s-terraform/
+├── main.tf              # Terraform infrastructure code
+├── variables.tf         # Terraform variables
+├── outputs.tf           # Terraform outputs
+├── provider.tf          # Terraform providers
+├── inventory.ini        # Ansible inventory
+├── playbook.yml         # Ansible playbook
+├── k8s-deploy.yml       # Kubernetes deployment manifests
+├── Jenkinsfile          # Jenkins CI/CD pipeline
+├── Dockerfile           # Docker image for Python API
+├── app.py               # Python Flask REST API
+├── requirements.txt     # Python dependencies
+└── README.md           # This file
 ```
 
 ## 🔧 Components Explained
@@ -241,14 +275,13 @@ Azure-K8S-final-Project/
 - **Certificate Renewal**: Automatic certificate renewal
 - **DNS Challenge**: HTTP-01 challenge via Ingress
 
-
 ## ✅ Demo Status
 
 🚀 **Example Implementation**
 
 This repository provides a complete working example of:
-- **Jenkins**: Accessible at `https://jenkins.yourdomain.com:30443`
-- **Python API**: Available at `https://api.yourdomain.com:30443/books`
+- **Jenkins**: Accessible at `jenkins.yourdomain.com:30189`
+- **Python API**: Available at `api.yourdomain.com:30189/books`
 - **Cluster**: 3-node Azure deployment with VXLAN networking
 
 > **Note**: Replace domain names and credentials with your own before deployment.

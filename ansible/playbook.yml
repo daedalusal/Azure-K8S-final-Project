@@ -1,4 +1,12 @@
----
+- name: Display Azure Load Balancer public IP for ingress
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Show Azure Load Balancer public IP for DNS setup
+      debug:
+        msg: |
+          Azure Load Balancer public IP for ingress: {{ lookup('env', 'K8S_LB_PUBLIC_IP') or 'Set this to the output from Terraform: k8s_lb_public_ip' }}
+          Use this IP for your DNS A records for jenkins.daedalusproject.online and python-api.daedalusproject.online.
 - name: Basic setup for Kubernetes nodes
   hosts: all
   become: yes
@@ -346,7 +354,6 @@
     - name: Set join command fact for workers
       set_fact:
         worker_join_cmd: "{{ join_command.stdout }}"
-      delegate_to: localhost
       run_once: true
 
 - name: Join worker nodes to the cluster
@@ -412,7 +419,17 @@
         --set controller.javaOpts="-Xmx512m"
         --set controller.initContainerResources.requests.memory=256Mi
         --set controller.initContainerResources.requests.cpu=250m
-        --set controller.installPlugins=null
+        --set controller.installPlugins[0]=kubernetes:latest
+        --set controller.installPlugins[1]=workflow-aggregator:latest
+        --set controller.installPlugins[2]=git:latest
+        --set controller.installPlugins[3]=configuration-as-code:latest
+        --set controller.installPlugins[4]=docker-workflow:latest
+        --set controller.installPlugins[5]=pipeline-stage-view:latest
+        --set controller.installPlugins[6]=blueocean:latest
+        --set controller.installPlugins[7]=github:latest
+        --set controller.installPlugins[8]=docker-commons:latest
+        --set controller.installPlugins[9]=credentials:latest
+        --set controller.installPlugins[10]=kubernetes:latest
         --set controller.sidecars.configAutoReload.enabled=false
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
@@ -469,87 +486,35 @@
     jenkins_domain: "jenkins.daedalusproject.online"
     base_domain: "daedalusproject.online"
   tasks:
-    - name: Wait for Jenkins to be fully ready
-      shell: |
-        kubectl wait --for=condition=Ready pod -l app.kubernetes.io/name=jenkins -n jenkins --timeout=300s
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      ignore_errors: yes
+    - name: Create Kaniko build job manifest
+      copy:
+        dest: /tmp/kaniko-job.yaml
+        content: |
+          apiVersion: batch/v1
+          kind: Job
+          metadata:
+            name: kaniko-build
+            namespace: python-api
+          spec:
+            backoffLimit: 0
+            template:
+              spec:
+                containers:
+                - name: kaniko
+                  image: gcr.io/kaniko-project/executor:latest
+                  args:
+                    - "--dockerfile=Dockerfile"
+                    - "--context=git://github.com/daedalusal/Azure-K8S-final-Project.git#refs/heads/main"
+                    - "--destination=daedalusal2025/mypython-app:latest"
+                  volumeMounts:
+                    - name: kaniko-secret
+                      mountPath: /kaniko/.docker
+                restartPolicy: Never
+                volumes:
+                  - name: kaniko-secret
+                    secret:
+                      secretName: regcred
 
-    - name: Install essential tools in Jenkins pod
-      shell: |
-        echo "=== Installing CI/CD tools in Jenkins ==="
-        
-        # Install Docker CLI
-        kubectl exec jenkins-0 -n jenkins -- sh -c "
-          apt-get update -qq &&
-          apt-get install -y curl python3 python3-pip &&
-          curl -fsSL https://download.docker.com/linux/static/stable/x86_64/docker-20.10.24.tgz | tar xz &&
-          mv docker/docker /usr/local/bin/ &&
-          chmod +x /usr/local/bin/docker &&
-          rm -rf docker
-        " || echo "Tool installation failed"
-        
-        # Install kubectl
-        kubectl exec jenkins-0 -n jenkins -- sh -c "
-          curl -LO 'https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl' &&
-          chmod +x kubectl &&
-          mv kubectl /usr/local/bin/
-        " || echo "kubectl installation failed"
-        
-        echo "=== Tools installed successfully ==="
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      ignore_errors: yes
-
-    - name: Configure Jenkins Kubernetes access
-      shell: |
-        # Setup kubeconfig
-        kubectl exec jenkins-0 -n jenkins -- mkdir -p /var/jenkins_home/.kube || true
-        kubectl cp /home/azureuser/.kube/config jenkins/jenkins-0:/var/jenkins_home/.kube/config || true
-        kubectl exec jenkins-0 -n jenkins -- chown -R jenkins:jenkins /var/jenkins_home/.kube || true
-        
-        # Create python-api namespace
-        kubectl create namespace python-api || echo "Namespace exists"
-        
-        # Create basic python deployment for testing
-        kubectl apply -f - <<EOF || true
-        apiVersion: apps/v1
-        kind: Deployment
-        metadata:
-          name: python-rest-api
-          namespace: python-api
-        spec:
-          replicas: 1
-          selector:
-            matchLabels:
-              app: python-rest-api
-          template:
-            metadata:
-              labels:
-                app: python-rest-api
-            spec:
-              containers:
-              - name: python-rest-api
-                image: python:3.9-slim
-                command: ["python3", "-c", "import http.server; import socketserver; socketserver.TCPServer(('', 5000), http.server.SimpleHTTPRequestHandler).serve_forever()"]
-                ports:
-                - containerPort: 5000
-        EOF
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      ignore_errors: yes
-
-    - name: Verify Jenkins tool installation
-      shell: |
-        echo "=== Jenkins Tool Verification ==="
-        kubectl exec jenkins-0 -n jenkins -- docker --version || echo "❌ Docker CLI not available"
-        kubectl exec jenkins-0 -n jenkins -- kubectl version --client || echo "❌ kubectl not available"
-        kubectl exec jenkins-0 -n jenkins -- python3 --version || echo "❌ Python3 not available"
-        echo "✅ Jenkins configuration completed!"
-      environment:
-        KUBECONFIG: /home/azureuser/.kube/config
-      ignore_errors: yes
 
 - name: Deploy NGINX ingress controller in Kubernetes using Helm
   hosts: master
@@ -570,10 +535,10 @@
 
     - name: Install NGINX ingress controller
       command: >
-        helm install ingress-nginx ingress-nginx/ingress-nginx
-        --namespace ingress-nginx --create-namespace
-        --set controller.service.type=NodePort
-        --set controller.service.nodePorts.http=30080
+        helm install ingress-nginx ingress-nginx/ingress-nginx \
+        --namespace ingress-nginx --create-namespace \
+        --set controller.service.type=NodePort \
+        --set controller.service.nodePorts.http=30080 \
         --set controller.service.nodePorts.https=30443
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
@@ -730,7 +695,7 @@
         echo "   kubectl get secret jenkins -n jenkins -o jsonpath='{.data.jenkins-admin-password}' | base64 -d"
         echo ""
         echo "⚠️  IMPORTANT: Configure DNS first!"
-        echo "   Add A record: {{ jenkins_domain }} → {{ ansible_default_ipv4.address }}"
+        echo "   Add A record: {{ jenkins_domain }} → {{ groups['master'][0] }}"
         echo ""
         echo "✅ Features enabled:"
         echo "   - NGINX Ingress Controller"

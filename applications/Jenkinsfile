@@ -1,7 +1,7 @@
 pipeline {
         agent {
                         kubernetes {
-                                yaml """
+                            yaml """
         apiVersion: v1
         kind: Pod
         spec:
@@ -27,41 +27,41 @@ pipeline {
                 volumeMounts:
                 - name: docker-graph-storage
                     mountPath: /var/lib/docker
-            - name: python
-                image: python:3.9-slim
-                command:
+                        yaml """
+apiVersion: v1
+kind: Pod
+spec:
+    containers:
+        - name: dind
+            image: docker:24.0.2-dind
+            securityContext:
+                privileged: true
+            env:
+                - name: DOCKER_TLS_CERTDIR
+                    value: ""
+            volumeMounts:
+                - name: docker-graph-storage
+                    mountPath: /var/lib/docker
+        - name: build
+            image: docker:24.0.2-cli
+            command:
                 - cat
-                tty: true
-            volumes:
-            - name: docker-graph-storage
-                emptyDir: {}
-                                """
-                                defaultContainer 'build'
-                        }
-        }
-    stages {
-        stage('Build') {
-            steps {
-                container('build') {
-                    sh "docker version"
-                    dir('applications') {
-                        sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -f Dockerfile.python ."
-                        sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
-                    }
-                }
-            }
-        }
-        stage('Push') {
-            steps {
-                container('build') {
-                    withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
-                        sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
-                        sh "docker push ${DOCKER_IMAGE}:latest"
-                    }
-                }
-            }
-        }
+            tty: true
+            env:
+                - name: DOCKER_HOST
+                    value: tcp://localhost:2375
+            volumeMounts:
+                - name: docker-graph-storage
+                    mountPath: /var/lib/docker
+        - name: python
+            image: python:3.9-slim
+            command:
+                - cat
+            tty: true
+    volumes:
+        - name: docker-graph-storage
+            emptyDir: {}
+                        """
         stage('Test') {
             steps {
                 container('python') {

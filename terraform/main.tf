@@ -1,3 +1,100 @@
+# Azure Public IP for Load Balancer
+resource "azurerm_public_ip" "lb" {
+  name                = "k8s-lb-public-ip"
+  location            = azurerm_resource_group.k8s.location
+  resource_group_name = azurerm_resource_group.k8s.name
+  allocation_method   = "Static"
+  sku                 = "Standard"
+}
+
+# Azure Load Balancer
+resource "azurerm_lb" "k8s_lb" {
+  name                = "k8s-lb"
+  location            = azurerm_resource_group.k8s.location
+  resource_group_name = azurerm_resource_group.k8s.name
+  sku                 = "Standard"
+
+  frontend_ip_configuration {
+    name                 = "PublicIPAddress"
+    public_ip_address_id = azurerm_public_ip.lb.id
+  }
+}
+
+# Backend address pool for all K8s nodes
+resource "azurerm_lb_backend_address_pool" "k8s_pool" {
+  loadbalancer_id = azurerm_lb.k8s_lb.id
+  name            = "k8s-backend-pool"
+}
+
+# Health probe for HTTP
+resource "azurerm_lb_probe" "http" {
+  loadbalancer_id     = azurerm_lb.k8s_lb.id
+  name                = "http-probe"
+  protocol            = "Tcp"
+  port                = 30080
+  interval_in_seconds = 5
+  number_of_probes    = 2
+}
+
+# Health probe for HTTPS
+resource "azurerm_lb_probe" "https" {
+  loadbalancer_id     = azurerm_lb.k8s_lb.id
+  name                = "https-probe"
+  protocol            = "Tcp"
+  port                = 30443
+  interval_in_seconds = 5
+  number_of_probes    = 2
+}
+
+# LB rule for HTTP (80 -> 30080)
+
+# LB rule for HTTP (80 -> 30080)
+resource "azurerm_lb_rule" "http" {
+  name                           = "http"
+  loadbalancer_id                = azurerm_lb.k8s_lb.id
+  protocol                       = "Tcp"
+  frontend_port                  = 80
+  backend_port                   = 30080
+  frontend_ip_configuration_name = "PublicIPAddress"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.k8s_pool.id]
+  probe_id                       = azurerm_lb_probe.http.id
+}
+
+# LB rule for HTTPS (443 -> 30443)
+resource "azurerm_lb_rule" "https" {
+  name                           = "https"
+  loadbalancer_id                = azurerm_lb.k8s_lb.id
+  protocol                       = "Tcp"
+  frontend_port                  = 443
+  backend_port                   = 30443
+  frontend_ip_configuration_name = "PublicIPAddress"
+  backend_address_pool_ids       = [azurerm_lb_backend_address_pool.k8s_pool.id]
+  probe_id                       = azurerm_lb_probe.https.id
+}
+
+# Associate all VM NICs with the backend pool
+
+resource "azurerm_network_interface_backend_address_pool_association" "master" {
+  network_interface_id    = azurerm_network_interface.master_nic.id
+  ip_configuration_name   = "internal"
+  backend_address_pool_id = azurerm_lb_backend_address_pool.k8s_pool.id
+}
+resource "azurerm_network_interface_backend_address_pool_association" "worker1" {
+  network_interface_id    = azurerm_network_interface.worker_nic_1.id
+  ip_configuration_name   = "internal"
+  backend_address_pool_id = azurerm_lb_backend_address_pool.k8s_pool.id
+}
+resource "azurerm_network_interface_backend_address_pool_association" "worker2" {
+  network_interface_id    = azurerm_network_interface.worker_nic_2.id
+  ip_configuration_name   = "internal"
+  backend_address_pool_id = azurerm_lb_backend_address_pool.k8s_pool.id
+}
+
+# Output the public IP for use in Ansible or DNS
+output "k8s_lb_public_ip" {
+  value = azurerm_public_ip.lb.ip_address
+  description = "Public IP address of the Azure Load Balancer for K8s ingress."
+}
 resource "azurerm_resource_group" "k8s" {
     name     = "k8s-resource-group"
     location = "West Europe"
@@ -268,7 +365,7 @@ resource "azurerm_public_ip" "worker2" {
   allocation_method   = "Static"
 }
 resource "local_file" "ansible_inventory" {
-  content = templatefile("${path.module}/inventory.tpl", {
+  content = templatefile("${path.module}/../ansible/inventory.tpl", {
     master_ip = azurerm_public_ip.master.ip_address
     worker1_ip = azurerm_public_ip.worker1.ip_address
     worker2_ip = azurerm_public_ip.worker2.ip_address
@@ -286,6 +383,6 @@ resource "null_resource" "ansible_provision" {
   ]
 
   provisioner "local-exec" {
-    command = "ansible-playbook -i ${path.module}/inventory.ini ${path.module}/playbook.yml -vv"
+    command = "ansible-playbook -i ${path.module}/inventory.ini ${path.module}/../ansible/playbook.yml -vvv"
   }
 }

@@ -40,15 +40,37 @@ spec:
         }
     }
     stages {
-        stage('Test') {
-            steps {
-                container('python') {
-                    dir('applications') {
-                        sh "python3 -m py_compile main.py"
-                    }
-                }
-            }
+    stage('Build') {
+      steps {
+        container('build') {
+          sh "docker version"
+          dir('applications') {
+            sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -f Dockerfile.python ."
+            sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
+          }
         }
+      }
+    }
+    stage('Push') {
+      steps {
+        container('build') {
+          withCredentials([usernamePassword(credentialsId: 'dockerhub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+            sh "echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin"
+            sh "docker push ${DOCKER_IMAGE}:${DOCKER_TAG}"
+            sh "docker push ${DOCKER_IMAGE}:latest"
+          }
+        }
+      }
+    }
+    stage('Test') {
+      steps {
+        container('python') {
+          dir('applications') {
+            sh "python3 -m py_compile main.py"
+          }
+        }
+      }
+    }
     }
     post {
         always {

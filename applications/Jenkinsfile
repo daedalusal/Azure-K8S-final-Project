@@ -10,6 +10,9 @@ spec:
       image: docker:24.0.2-dind
       securityContext:
         privileged: true
+      args:
+        - --host=tcp://0.0.0.0:2375
+        - --host=unix:///var/run/docker.sock
       env:
         - name: DOCKER_TLS_CERTDIR
           value: ""
@@ -43,6 +46,14 @@ spec:
     stage('Build') {
       steps {
         container('build') {
+          // Wait for Docker daemon to be ready
+          sh '''
+            for i in {1..30}; do
+              docker info > /dev/null 2>&1 && break
+              echo "Waiting for Docker daemon..."
+              sleep 2
+            done
+          '''
           sh "docker version"
           dir('applications') {
             sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -f Dockerfile.python ."

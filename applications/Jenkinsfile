@@ -1,7 +1,7 @@
 pipeline {
-    agent {
-        kubernetes {
-            yaml """
+  agent {
+    kubernetes {
+      yaml """
 apiVersion: v1
 kind: Pod
 spec:
@@ -16,6 +16,16 @@ spec:
       env:
         - name: DOCKER_TLS_CERTDIR
           value: ""
+      readinessProbe:
+        exec:
+          command:
+            - sh
+            - -c
+            - |
+              docker info > /dev/null 2>&1
+        initialDelaySeconds: 5
+        periodSeconds: 2
+        failureThreshold: 10
       volumeMounts:
         - name: docker-graph-storage
           mountPath: /var/lib/docker
@@ -27,6 +37,10 @@ spec:
       env:
         - name: DOCKER_HOST
           value: tcp://localhost:2375
+        - name: DOCKER_IMAGE
+          value: "daedalusal/your-image-name"
+        - name: DOCKER_TAG
+          value: "latest"
       volumeMounts:
         - name: docker-graph-storage
           mountPath: /var/lib/docker
@@ -46,29 +60,29 @@ spec:
     stage('Build') {
       steps {
         container('build') {
-          // Wait for Docker daemon to be ready, up to 60 seconds
-          def dockerReady = sh(script: '''
-            for i in {1..30}; do
-              docker info > /dev/null 2>&1 && exit 0
-              echo "Waiting for Docker daemon... ($i/30)"
+          script {
+            // Wait for Docker daemon to be ready, up to 90 seconds
+            def maxTries = 45
+            def ready = false
+            for (int i = 0; i < maxTries; i++) {
+              if (sh(script: 'docker info > /dev/null 2>&1', returnStatus: true) == 0) {
+                ready = true
+                break
+              }
+              echo "Waiting for Docker daemon... (${i+1}/${maxTries})"
               sleep 2
-            done
-            echo "Docker daemon did not become ready in time. Printing DinD logs:"
-            if [ -x /usr/bin/pgrep ] && [ -x /usr/bin/nsenter ]; then
-              pid=$(pgrep dockerd)
-              if [ -n "$pid" ]; then
-              nsenter -t $pid -m -u -i -n -p -- tail -40 /var/log/docker.log || true
-              fi
-            fi
-            exit 1
-          ''', returnStatus: true)
-          if (dockerReady != 0) {
-            error('Docker daemon did not start in time. See DinD logs above.')
-          }
-          sh "docker version"
-          dir('applications') {
-            sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -f Dockerfile.python ."
-            sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
+            }
+            if (!ready) {
+              echo 'Docker daemon did not start in time. Printing DinD logs (if available):'
+              sh 'ps aux || true'
+              sh 'cat /var/log/docker.log || true'
+              error('Docker daemon did not start in time. See DinD logs above.')
+            }
+            sh "docker version"
+            dir('applications') {
+              sh "docker build -t ${DOCKER_IMAGE}:${DOCKER_TAG} -f Dockerfile.python ."
+              sh "docker tag ${DOCKER_IMAGE}:${DOCKER_TAG} ${DOCKER_IMAGE}:latest"
+            }
           }
         }
       }

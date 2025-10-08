@@ -317,12 +317,23 @@
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
 
+
     - name: Remove all NetworkPolicies for learning environment
       shell: |
         # Remove any existing NetworkPolicies that might block communication
         kubectl delete networkpolicy --all --all-namespaces || true
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
+
+    - name: Deploy Python API to Kubernetes
+      shell: |
+        kubectl apply -f /home/azureuser/Azure-K8S-final-Project/kubernetes/python-api-deployment.yaml
+        kubectl apply -f /home/azureuser/Azure-K8S-final-Project/kubernetes/python-api-service.yaml
+        kubectl apply -f /home/azureuser/Azure-K8S-final-Project/kubernetes/python-api-ingress.yaml
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      register: python_api_deploy
       ignore_errors: yes
 
 

@@ -1,0 +1,29 @@
+replicaCount: 2
+image:
+  repository: yourusername/mypython-app
+  tag: latest
+  pullPolicy: IfNotPresent
+service:
+  type: ClusterIP
+  port: 8000
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: api.daedalusproject.online
+      paths:
+        - path: /
+          pathType: Prefix
+  tls:
+    - secretName: python-api-tls
+      hosts:
+        - api.daedalusproject.online
+resources:
+  requests:
+    memory: 128Mi
+    cpu: 100m
+  limits:
+    memory: 256Mi
+    cpu: 200m

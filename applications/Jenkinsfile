@@ -98,6 +98,22 @@ spec:
         }
       }
     }
+    stage('Deploy') {
+      steps {
+        container('build') {
+          withCredentials([file(credentialsId: 'kubeconfig-cred', variable: 'KUBECONFIG')]) {
+            sh '''
+              helm upgrade --install python-api ./helm/python-api \
+                --namespace python-api --create-namespace \
+                --set image.repository=${DOCKER_IMAGE} \
+                --set image.tag=${DOCKER_TAG} \
+                --set ingress.hosts[0].host=api.daedalusproject.online \
+                --set ingress.tls[0].hosts[0]=api.daedalusproject.online
+            '''
+          }
+        }
+      }
+    }
     stage('Test') {
       steps {
         container('python') {

@@ -1,43 +1,43 @@
 pipeline {
         agent {
-                kubernetes {
-                        yaml """
-apiVersion: v1
-kind: Pod
-spec:
-    containers:
-        - name: dind
-            image: docker:24.0.2-dind
-            securityContext:
-                privileged: true
-            env:
+                        kubernetes {
+                                yaml """
+        apiVersion: v1
+        kind: Pod
+        spec:
+            containers:
+            - name: dind
+                image: docker:24.0.2-dind
+                securityContext:
+                    privileged: true
+                env:
                 - name: DOCKER_TLS_CERTDIR
                     value: ""
-            volumeMounts:
+                volumeMounts:
                 - name: docker-graph-storage
                     mountPath: /var/lib/docker
-        - name: build
-            image: docker:24.0.2-cli
-            command:
+            - name: build
+                image: docker:24.0.2-cli
+                command:
                 - cat
-            tty: true
-            env:
+                tty: true
+                env:
                 - name: DOCKER_HOST
                     value: tcp://localhost:2375
-            volumeMounts:
+                volumeMounts:
                 - name: docker-graph-storage
                     mountPath: /var/lib/docker
-        - name: python
-            image: python:3.9-slim
-            command:
+            - name: python
+                image: python:3.9-slim
+                command:
                 - cat
-            tty: true
-    volumes:
-        - name: docker-graph-storage
-            emptyDir: {}
-                        """
-                        defaultContainer 'build'
-                }
+                tty: true
+            volumes:
+            - name: docker-graph-storage
+                emptyDir: {}
+                                """
+                                defaultContainer 'build'
+                        }
         }
     stages {
         stage('Build') {

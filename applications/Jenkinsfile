@@ -7,22 +7,22 @@ kind: Pod
 spec:
   containers:
   - name: build
-    image: docker:24.0.2-cli
+    image: docker:24.0.2-dind
+    securityContext:
+      privileged: true
     command:
-    - cat
+    - dockerd-entrypoint.sh
+    args:
+    - --host=unix:///var/run/docker.sock
     tty: true
-    volumeMounts:
-    - name: docker-sock
-      mountPath: /var/run/docker.sock
+    env:
+    - name: DOCKER_TLS_CERTDIR
+      value: ""
   - name: python
     image: python:3.9-slim
     command:
     - cat
     tty: true
-  volumes:
-  - name: docker-sock
-    hostPath:
-      path: /var/run/docker.sock
 """
             defaultContainer 'build'
         }

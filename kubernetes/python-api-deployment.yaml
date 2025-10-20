@@ -6,7 +6,7 @@ metadata:
   labels:
     app: python-rest-api
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
       app: python-rest-api
@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: python-rest-api
-        image: yourusername/mypython-app:latest
+        image: daedalusal2025/mypython-app:latest
         ports:
         - containerPort: 8000
         resources:
@@ -27,3 +27,38 @@ spec:
           limits:
             memory: "256Mi"
             cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - python-rest-api
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: python-rest-api

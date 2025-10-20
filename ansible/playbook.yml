@@ -172,7 +172,7 @@
       args:
         creates: /etc/kubernetes/admin.conf
       register: kubeadm_init
-
+      
     - name: Set up kubeconfig for azureuser
       shell: |
         mkdir -p /home/azureuser/.kube
@@ -180,13 +180,13 @@
         chown azureuser:azureuser /home/azureuser/.kube/config
       args:
         executable: /bin/bash
-
+      
     - name: Install Calico network plugin
       shell: |
         kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
-
+      
     - name: Wait for Calico to be ready
       shell: |
         kubectl wait --for=condition=Ready pod -l k8s-app=calico-node -n kube-system --timeout=300s
@@ -326,6 +326,54 @@
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
 
+    - name: Ensure deploy directory exists for repo manifests
+      file:
+        path: /home/azureuser/Azure-K8S-final-Project/kubernetes
+        state: directory
+        owner: azureuser
+        group: azureuser
+        mode: '0755'
+      become: yes
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+
+    - name: Copy python-api deployment manifest to master
+      copy:
+        dest: /home/azureuser/Azure-K8S-final-Project/kubernetes/python-api-deployment.yaml
+        content: "{{ lookup('file', '../kubernetes/python-api-deployment.yaml') }}"
+        owner: azureuser
+        group: azureuser
+        mode: '0644'
+      become: yes
+      run_once: true
+
+    - name: Copy python-api service manifest to master
+      copy:
+        dest: /home/azureuser/Azure-K8S-final-Project/kubernetes/python-api-service.yaml
+        content: "{{ lookup('file', '../kubernetes/python-api-service.yaml') }}"
+        owner: azureuser
+        group: azureuser
+        mode: '0644'
+      become: yes
+      run_once: true
+
+    - name: Copy python-api ingress manifest to master
+      copy:
+        dest: /home/azureuser/Azure-K8S-final-Project/kubernetes/python-api-ingress.yaml
+        content: "{{ lookup('file', '../kubernetes/python-api-ingress.yaml') }}"
+        owner: azureuser
+        group: azureuser
+        mode: '0644'
+      become: yes
+      run_once: true
+
+    - name: Ensure python-api namespace exists
+      shell: |
+        kubectl create namespace python-api || true
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+      ignore_errors: yes
+
     - name: Deploy Python API to Kubernetes
       shell: |
         kubectl apply -f /home/azureuser/Azure-K8S-final-Project/kubernetes/python-api-deployment.yaml
@@ -334,20 +382,31 @@
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
       register: python_api_deploy
+
+  # metrics-server installation and patching removed per request
+
+  # python-api HPA deployment removed per request (we will use fixed replicas)
+
+    - name: Apply canonical python-rest-api deployment manifest (replicas=3)
+      shell: |
+        kubectl apply -f /home/azureuser/Azure-K8S-final-Project/kubernetes/python-api-deployment.yaml
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
 
 
 
     - name: Verify cluster status after setup
       shell: |
+        set -e
         echo "=== Cluster Info ==="
-        kubectl cluster-info
+        kubectl cluster-info || true
         echo "=== Node Status ==="
-        kubectl get nodes -o wide
+        kubectl get nodes -o wide || true
         echo "=== Pod Status ==="
-        kubectl get pods --all-namespaces
+        kubectl get pods --all-namespaces || true
         echo "=== DNS Test ==="
-        kubectl run dns-test --image=busybox:1.28 --rm -it --restart=Never --command -- nslookup kubernetes.default || true
+        kubectl run dns-test --image=busybox:1.28 --restart=Never --command -- /bin/sh -c 'nslookup kubernetes.default' || true
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
       register: cluster_status
@@ -419,6 +478,63 @@
         KUBECONFIG: /home/azureuser/.kube/config
       ignore_errors: yes
 
+    - name: Ensure Azure-K8S-final-Project kubernetes dir exists on master
+      file:
+        path: /home/azureuser/Azure-K8S-final-Project/kubernetes
+        state: directory
+        owner: azureuser
+        group: azureuser
+        mode: '0755'
+      become: yes
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+
+    - name: Copy Jenkins Helm values (JCasC) to master
+      copy:
+        dest: /home/azureuser/Azure-K8S-final-Project/kubernetes/jenkins-values.yaml
+        content: |
+          controller:
+            JCasC:
+              configScripts:
+                jcasc: |
+                  jenkins:
+                    systemMessage: "Jenkins configured by Configuration-as-Code"
+                    clouds:
+                      - kubernetes:
+                          name: "kubernetes"
+                          serverUrl: "https://kubernetes.default:443"
+                          namespace: "jenkins"
+                          jenkinsUrl: "https://jenkins.daedalusproject.online"
+                          skipTlsVerify: true
+                          containerCapStr: "10"
+                          templates:
+                            - name: "jenkins-agent"
+                              label: "jenkins-agent"
+                              namespace: "jenkins"
+                              containers:
+                                - name: "jnlp"
+                                  image: "jenkins/inbound-agent:latest"
+                                  workingDir: "/home/jenkins"
+                                  ttyEnabled: false
+                                  command: ""
+                                  args: "${computer.jnlpmac} ${computer.name}"
+                                  resourceRequestCpu: "100m"
+                                  resourceRequestMemory: "128Mi"
+
+            resources:
+              requests:
+                memory: 512Mi
+                cpu: 500m
+              limits:
+                memory: 1Gi
+                cpu: 1
+        owner: azureuser
+        group: azureuser
+        mode: '0644'
+      become: yes
+      environment:
+        KUBECONFIG: /home/azureuser/.kube/config
+
     - name: Install Jenkins using Helm chart
       command: >
         helm install jenkins jenkins/jenkins
@@ -442,6 +558,7 @@
         --set controller.installPlugins[9]=credentials:latest
         --set controller.installPlugins[10]=kubernetes:latest
         --set controller.sidecars.configAutoReload.enabled=false
+        --values /home/azureuser/Azure-K8S-final-Project/kubernetes/jenkins-values.yaml
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
 
@@ -565,7 +682,6 @@
       command: helm repo add jetstack https://charts.jetstack.io
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
-      ignore_errors: yes
 
     - name: Update Helm repos
       command: helm repo update
@@ -579,7 +695,6 @@
         sleep 30
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
-      ignore_errors: yes
 
     - name: Install cert-manager (without --wait to avoid hanging)
       command: >
@@ -690,7 +805,6 @@
         kubectl wait --for=condition=Ready ingress/jenkins-ingress -n jenkins --timeout=120s || echo "Ingress not ready yet, continuing..."
       environment:
         KUBECONFIG: /home/azureuser/.kube/config
-      ignore_errors: yes
 
     - name: Display Jenkins access information
       shell: |
@@ -706,7 +820,8 @@
         echo "   kubectl get secret jenkins -n jenkins -o jsonpath='{.data.jenkins-admin-password}' | base64 -d"
         echo ""
         echo "⚠️  IMPORTANT: Configure DNS first!"
-        echo "   Add A record: {{ jenkins_domain }} → {{ groups['master'][0] }}"
+        echo "   Add A record: {{ jenkins_domain }} → {{ lookup('env', 'K8S_LB_PUBLIC_IP') or 'Set this to the output from Terraform: k8s_lb_public_ip' }}"
+        echo "   Add A record: {{ base_domain }} (or api) → {{ lookup('env', 'K8S_LB_PUBLIC_IP') or 'Set this to the output from Terraform: k8s_lb_public_ip' }}"
         echo ""
         echo "✅ Features enabled:"
         echo "   - NGINX Ingress Controller"

@@ -1,0 +1,49 @@
+controller:
+  # Jenkins Configuration as Code (JCasC) scripts
+  JCasC:
+    configScripts:
+        # "jcasc" is the script name; Helm chart will mount this into the controller
+        jcasc: |
+          jenkins:
+            systemMessage: "Jenkins configured by Configuration-as-Code"
+            clouds:
+              - kubernetes:
+                  name: "kubernetes"
+                  serverUrl: "https://kubernetes.default:443"
+                  namespace: "jenkins"
+                  jenkinsUrl: "https://jenkins.daedalusproject.online"
+                  skipTlsVerify: true
+                  containerCapStr: "10"
+                  # credentialsId: If you want Jenkins to use a stored kubeconfig credential,
+                  # create a Jenkins credential and set its id here. If left empty, the plugin
+                  # will try to use the in-cluster service account (recommended when Jenkins
+                  # runs inside the cluster).
+                  # credentialsId: ""
+                  templates:
+                    - name: "jenkins-agent"
+                      label: "jenkins-agent"
+                      # Pod will be created in the same namespace as the Jenkins controller
+                      namespace: "jenkins"
+                      containers:
+                        - name: "jnlp"
+                          image: "jenkins/inbound-agent:latest"
+                          workingDir: "/home/jenkins"
+                          ttyEnabled: false
+                          command: ""
+                          args: "${computer.jnlpmac} ${computer.name}"
+                          resourceRequestCpu: "100m"
+                          resourceRequestMemory: "128Mi"
+
+  # Optional: tune resources for the Jenkins controller itself
+  resources:
+    requests:
+      memory: 512Mi
+      cpu: 500m
+    limits:
+      memory: 1Gi
+      cpu: 1
+
+# You may pass additional Helm values here (persistence, serviceType, plugins, etc.).
+# To use this values file from the Ansible playbook, add the flag:
+#   --values /home/azureuser/Azure-K8S-final-Project/kubernetes/jenkins-values.yaml
+# to the existing helm install/upgrade command in ansible/playbook.yml

@@ -1,6 +1,6 @@
 replicaCount: 2
 image:
-  repository: yourusername/mypython-app
+  repository: daedalusal2025/mypython-app
   tag: latest
   pullPolicy: IfNotPresent
 service:
